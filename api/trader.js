@@ -14,15 +14,16 @@ export default async function handler(req, res) {
     const url = `https://polymarketanalytics.com/creators/${name}`;
 
     // Browserless request
-    const response = await fetch(`https://chrome.browserless.io/content?token=${token}`, {
+    const response = await fetch(`https://chrome.browserless.io/scrape?token=${token}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         url,
-        waitFor: "script#__NEXT_DATA__",
+        javascript: true,
+        waitForSelector: "script#__NEXT_DATA__",
+        timeout: 20000
       })
     });
-
     const html = await response.text();
 
     // Extract the __NEXT_DATA__ JSON
