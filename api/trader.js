@@ -13,20 +13,32 @@ export default async function handler(req, res) {
   try {
     const url = `https://polymarketanalytics.com/creators/${name}`;
 
-    // Browserless JS-enabled scraping
-    const response = await fetch(`https://chrome.browserless.io/scrape?token=${token}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        url,
-        javascript: true,
-        waitForSelector: "script#__NEXT_DATA__", // important
-        timeout: 20000
-      })
-    });
+    const payload = {
+      url,
+      javascript: true,
+      waitForSelector: "script#__NEXT_DATA__",
+      timeout: 20000
+    };
 
-    const json = await response.json();
-    const html = json.data;
+    const response = await fetch(
+      `https://chrome.browserless.io/scrape?token=${token}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      }
+    );
+
+    const result = await response.json();
+
+    if (!result || !result.data) {
+      return res.status(500).json({
+        error: "Browserless returned no data",
+        details: result
+      });
+    }
+
+    const html = result.data;
 
     const jsonMatch = html.match(
       /<script id="__NEXT_DATA__" type="application\/json">(.*?)<\/script>/
@@ -40,7 +52,7 @@ export default async function handler(req, res) {
     const trader = nextData?.props?.pageProps;
 
     if (!trader) {
-      return res.status(500).json({ error: "Trader data not found" });
+      return res.status(500).json({ error: "Trader JSON missing" });
     }
 
     return res.status(200).json({
