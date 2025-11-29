@@ -29,7 +29,18 @@ export default async function handler(req, res) {
       }
     );
 
-    const result = await response.json();
+    const rawText = await response.text();
+
+    // Intentamos parsear como JSON. Si falla, devolvemos el texto bruto.
+    let result;
+    try {
+      result = JSON.parse(rawText);
+    } catch (e) {
+      return res.status(500).json({
+        error: "Browserless non-JSON response",
+        raw: rawText.slice(0, 500)
+      });
+    }
 
     if (!result || !result.data) {
       return res.status(500).json({
@@ -45,7 +56,7 @@ export default async function handler(req, res) {
     );
 
     if (!jsonMatch) {
-      return res.status(500).json({ error: "Unable to find trader data" });
+      return res.status(500).json({ error: "Unable to find trader data in HTML" });
     }
 
     const nextData = JSON.parse(jsonMatch[1]);
