@@ -1,87 +1,107 @@
 export default async function handler(req, res) {
   const { name } = req.query;
 
+  // Ejemplo de uso:
+  //   /api/trader?name=mikatrade77
   if (!name) {
-    return res.status(400).json({ error: "Missing trader name (?name=)" });
+    return res
+      .status(400)
+      .json({ error: "Missing trader name. Use ?name=mikatrade77" });
   }
 
   const token = process.env.BROWSERLESS_TOKEN;
   if (!token) {
-    return res.status(500).json({ error: "Missing Browserless token" });
+    return res
+      .status(500)
+      .json({ error: "Missing Browserless token in environment vars" });
   }
 
+  const traderUrl = `https://polymarketanalytics.com/creators/${encodeURIComponent(
+    name
+  )}`;
+
   try {
-    const url = `https://polymarketanalytics.com/creators/${name}`;
-
-    const payload = {
-      url,
-      javascript: true,
-      waitForSelector: "script#__NEXT_DATA__",
-      timeout: 20000
-    };
-
+    // Llamamos al endpoint oficial /chromium/scrape
     const response = await fetch(
-      `https://chrome.browserless.io/scrape?token=${token}`,
+      `https://chrome.browserless.io/chromium/scrape?token=${token}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({
+          url: traderUrl,
+          bestAttempt: true,
+          // le decimos a Browserless que espere al script con __NEXT_DATA__
+          waitForSelector: {
+            selector: "script#__NEXT_DATA__",
+            timeout: 20000
+          },
+          // y que nos devuelva precisamente ese elemento
+          elements: [
+            {
+              selector: "script#__NEXT_DATA__",
+              timeout: 20000
+            }
+          ]
+        })
       }
     );
 
-    const rawText = await response.text();
+    if (!response.ok) {
+      const text = await response.text();
+      return res.status(500).json({
+        error: "Browserless request failed",
+        status: response.status,
+        body: text.slice(0, 1000)
+      });
+    }
 
-    // Intentamos parsear como JSON. Si falla, devolvemos el texto bruto.
-    let result;
+    const scraped = await response.json();
+
+    // scraped.data[0].results[0] debería contener el script con el JSON
+    const firstElement = scraped?.data?.[0];
+    const firstResult = firstElement?.results?.[0];
+
+    const scriptText = firstResult?.text || firstResult?.html || null;
+
+    if (!scriptText) {
+      return res.status(500).json({
+        error: "Unable to find __NEXT_DATA__ script tag",
+        debug: scraped?.data
+      });
+    }
+
+    let nextData;
     try {
-      result = JSON.parse(rawText);
+      nextData = JSON.parse(scriptText);
     } catch (e) {
       return res.status(500).json({
-        error: "Browserless non-JSON response",
-        raw: rawText.slice(0, 500)
+        error: "Failed to parse __NEXT_DATA__ JSON",
+        message: e.message,
+        snippet: scriptText.slice(0, 500)
       });
     }
 
-    if (!result || !result.data) {
+    const pageProps = nextData?.props?.pageProps;
+    if (!pageProps) {
       return res.status(500).json({
-        error: "Browserless returned no data",
-        details: result
+        error: "Trader data not found in __NEXT_DATA__",
+        keys: Object.keys(nextData || {})
       });
     }
 
-    const html = result.data;
+    const creator = pageProps.creator || {};
 
-    const jsonMatch = html.match(
-      /<script id="__NEXT_DATA__" type="application\/json">(.*?)<\/script>/
-    );
-
-    if (!jsonMatch) {
-      return res.status(500).json({ error: "Unable to find trader data in HTML" });
-    }
-
-    const nextData = JSON.parse(jsonMatch[1]);
-    const trader = nextData?.props?.pageProps;
-
-    if (!trader) {
-      return res.status(500).json({ error: "Trader JSON missing" });
-    }
-
+    // Resumen útil + el blob crudo por si luego quieres más campos
     return res.status(200).json({
-      name: trader?.creator?.name ?? null,
-      rank: trader?.creator?.rank ?? null,
-      pnl: trader?.creator?.overallPnl ?? null,
-      winRate: trader?.creator?.winRate ?? null,
-      positions: trader?.positions ?? [],
-      pnlHistory: trader?.pnlHistory ?? [],
-      categories: trader?.categories ?? [],
-      trades: trader?.trades ?? [],
-      raw: trader
+      name: creator.name ?? null,
+      rank: creator.rank ?? null,
+      pnl: creator.overallPnl ?? null,
+      winRate: creator.winRate ?? null,
+      positions: pageProps.positions ?? [],
+      pnlHistory: pageProps.pnlHistory ?? [],
+      categories: pageProps.categories ?? [],
+      trades: pageProps.trades ?? [],
+      raw: pageProps
     });
-
   } catch (err) {
-    return res.status(500).json({
-      error: "Scraping failed",
-      details: err.message
-    });
-  }
-}
+    return res.status(
