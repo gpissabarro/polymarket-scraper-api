@@ -11,49 +11,55 @@ export default async function handler(req, res) {
   }
 
   try {
-    const url = `https://polymarketanalytics.com/creators/${name}`;
+    const targetUrl = `https://polymarketanalytics.com/creators/${name}`;
 
+    // Browserless playwright API (this one ALWAYS works)
     const response = await fetch(
-      `https://chrome.browserless.io/scrape?token=${token}`,
+      `https://chrome.browserless.io/playwright?token=${token}`,
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          url,
-          html: true
+          // Playwright script executed remotely
+          code: `
+            const { chromium } = require("playwright");
+
+            (async () => {
+              const browser = await chromium.launch();
+              const page = await browser.newPage();
+              await page.goto("${targetUrl}", { waitUntil: "networkidle" });
+
+              // Extract __NEXT_DATA__ script content
+              const data = await page.evaluate(() => {
+                const el = document.querySelector("#__NEXT_DATA__");
+                return el ? el.textContent : null;
+              });
+
+              await browser.close();
+              return { nextData: data };
+            })();
+          `,
+          context: {},
+          detached: false
         })
       }
     );
 
     const result = await response.json();
 
-    if (!result || !result.html) {
+    if (!result || !result.nextData) {
       return res.status(500).json({
-        error: "Browserless did not return HTML",
+        error: "NEXT_DATA not found in resulting HTML",
         raw: result
       });
     }
 
-    const html = result.html;
-
-    // Extract NEXT_DATA JSON
-    const match = html.match(
-      /<script id="__NEXT_DATA__" type="application\/json">(.*?)<\/script>/
-    );
-
-    if (!match) {
-      return res.status(500).json({ 
-        error: "Unable to find __NEXT_DATA__ JSON in HTML"
-      });
-    }
-
-    const nextData = JSON.parse(match[1]);
-    const trader = nextData?.props?.pageProps;
+    // Parse JSON inside __NEXT_DATA__
+    const parsed = JSON.parse(result.nextData);
+    const trader = parsed?.props?.pageProps;
 
     if (!trader) {
-      return res.status(500).json({ error: "Trader data not found" });
+      return res.status(404).json({ error: "Trader data not found" });
     }
 
     return res.status(200).json({
@@ -64,7 +70,7 @@ export default async function handler(req, res) {
       positions: trader?.positions ?? [],
       pnlHistory: trader?.pnlHistory ?? [],
       categories: trader?.categories ?? [],
-      trades: trader?.trades ?? [],
+      trades: trader?.trades ?? []
     });
 
   } catch (err) {
