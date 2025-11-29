@@ -14,39 +14,24 @@ export default async function handler(req, res) {
   }
 
   const BROWSERLESS_URL = `wss://chrome.browserless.io?token=${token}`;
-
   const url = `https://polymarketanalytics.com/trader/${wallet}`;
 
   try {
-    // 1. Conectar al navegador remoto
+    console.log("Connecting to Browserless…");
     const browser = await chromium.connectOverCDP(BROWSERLESS_URL);
     const context = await browser.newContext();
     const page = await context.newPage();
 
-    // 2. Acceder a la página del trader
+    console.log("Navigating to:", url);
     await page.goto(url, { waitUntil: "networkidle" });
 
-    // 3. Obtener contenido HTML ya renderizado
     const html = await page.content();
     const $ = cheerio.load(html);
 
-    // 4. Extraer datos
     const name = $("h1").first().text().trim() || null;
-
-    const winRate = $('div:contains("Win Rate")')
-      .next()
-      .text()
-      .trim() || null;
-
-    const pnl = $('div:contains("Total PnL")')
-      .next()
-      .text()
-      .trim() || null;
-
-    const rank = $('div:contains("Rank")')
-      .next()
-      .text()
-      .trim() || null;
+    const winRate = $('div:contains("Win Rate")').next().text().trim() || null;
+    const pnl = $('div:contains("Total PnL")').next().text().trim() || null;
+    const rank = $('div:contains("Rank")').next().text().trim() || null;
 
     let markets = [];
     $(".market-card").each((i, el) => {
@@ -61,7 +46,6 @@ export default async function handler(req, res) {
 
     await browser.close();
 
-    // 5. Respuesta
     return res.status(200).json({
       wallet,
       name,
