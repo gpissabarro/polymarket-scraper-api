@@ -13,20 +13,21 @@ export default async function handler(req, res) {
   try {
     const url = `https://polymarketanalytics.com/creators/${name}`;
 
-    // Browserless request
+    // Browserless JS-enabled scraping
     const response = await fetch(`https://chrome.browserless.io/scrape?token=${token}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         url,
         javascript: true,
-        waitForSelector: "script#__NEXT_DATA__",
+        waitForSelector: "script#__NEXT_DATA__", // important
         timeout: 20000
       })
     });
-    const html = await response.text();
 
-    // Extract the __NEXT_DATA__ JSON
+    const json = await response.json();
+    const html = json.data;
+
     const jsonMatch = html.match(
       /<script id="__NEXT_DATA__" type="application\/json">(.*?)<\/script>/
     );
@@ -36,8 +37,6 @@ export default async function handler(req, res) {
     }
 
     const nextData = JSON.parse(jsonMatch[1]);
-
-    // Real data is in nextData.props.pageProps
     const trader = nextData?.props?.pageProps;
 
     if (!trader) {
@@ -53,7 +52,7 @@ export default async function handler(req, res) {
       pnlHistory: trader?.pnlHistory ?? [],
       categories: trader?.categories ?? [],
       trades: trader?.trades ?? [],
-      raw: trader // full data if needed
+      raw: trader
     });
 
   } catch (err) {
