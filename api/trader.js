@@ -1,4 +1,4 @@
-import { chromium } from "playwright";
+import { chromium } from "playwright-core";
 import cheerio from "cheerio";
 
 export default async function handler(req, res) {
@@ -8,41 +8,60 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Missing wallet parameter" });
   }
 
+  const token = process.env.BROWSERLESS_TOKEN;
+  if (!token) {
+    return res.status(500).json({ error: "Missing Browserless token" });
+  }
+
+  const BROWSERLESS_URL = `wss://chrome.browserless.io?token=${token}`;
+
   const url = `https://polymarketanalytics.com/trader/${wallet}`;
 
   try {
-    // Launch headless browser
-    const browser = await chromium.launch();
-    const page = await browser.newPage();
+    // 1. Conectar al navegador remoto
+    const browser = await chromium.connectOverCDP(BROWSERLESS_URL);
+    const context = await browser.newContext();
+    const page = await context.newPage();
 
-    // Navigate and wait for rendering
+    // 2. Acceder a la página del trader
     await page.goto(url, { waitUntil: "networkidle" });
 
-    // Extract the rendered HTML
+    // 3. Obtener contenido HTML ya renderizado
     const html = await page.content();
     const $ = cheerio.load(html);
 
-    // Extract basic info
+    // 4. Extraer datos
     const name = $("h1").first().text().trim() || null;
 
-    const winRate = $('div:contains("Win Rate")').next().text().trim() || null;
+    const winRate = $('div:contains("Win Rate")')
+      .next()
+      .text()
+      .trim() || null;
 
-    const pnl = $('div:contains("Total PnL")').next().text().trim() || null;
+    const pnl = $('div:contains("Total PnL")')
+      .next()
+      .text()
+      .trim() || null;
 
-    const rank = $('div:contains("Rank")').next().text().trim() || null;
+    const rank = $('div:contains("Rank")')
+      .next()
+      .text()
+      .trim() || null;
 
-    // Extract positions
     let markets = [];
     $(".market-card").each((i, el) => {
       const market = $(el).find(".market-title").text().trim();
       const direction = $(el).find(".position").text().trim();
       const size = $(el).find(".size").text().trim();
 
-      markets.push({ market, direction, size });
+      if (market) {
+        markets.push({ market, direction, size });
+      }
     });
 
     await browser.close();
 
+    // 5. Respuesta
     return res.status(200).json({
       wallet,
       name,
@@ -53,7 +72,7 @@ export default async function handler(req, res) {
     });
 
   } catch (err) {
-    console.error("Error during scraping:", err);
+    console.error("Scraping error:", err);
     return res.status(500).json({
       error: "Scraping failed",
       details: err.message
