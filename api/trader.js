@@ -1,11 +1,10 @@
-import { chromium } from "playwright-core";
-import cheerio from "cheerio";
+import fetch from 'node-fetch';
 
 export default async function handler(req, res) {
-  const wallet = req.query.wallet;
+  const { name } = req.query;
 
-  if (!wallet) {
-    return res.status(400).json({ error: "Missing wallet parameter" });
+  if (!name) {
+    return res.status(400).json({ error: "Missing trader name (?name=)" });
   }
 
   const token = process.env.BROWSERLESS_TOKEN;
@@ -13,55 +12,55 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "Missing Browserless token" });
   }
 
-  const BROWSERLESS_URL = `wss://chrome.browserless.io?token=${token}`;
-  const url = `https://polymarketanalytics.com/trader/${wallet}`;
-
   try {
-    console.log("Connecting to Browserless…");
-    const browser = await chromium.connectOverCDP(BROWSERLESS_URL);
-    const context = await browser.newContext();
-    const page = await context.newPage();
+    const url = `https://polymarketanalytics.com/creators/${name}`;
 
-    console.log("Navigating to:", url);
-    await page.goto(url, { waitUntil: "networkidle" });
-
-    const html = await page.content();
-    const $ = cheerio.load(html);
-
-    const name = $("h1").first().text().trim() || null;
-    const winRate = $('div:contains("Win Rate")').next().text().trim() || null;
-    const pnl = $('div:contains("Total PnL")').next().text().trim() || null;
-    const rank = $('div:contains("Rank")').next().text().trim() || null;
-
-    let markets = [];
-    $(".market-card").each((i, el) => {
-      const market = $(el).find(".market-title").text().trim();
-      const direction = $(el).find(".position").text().trim();
-      const size = $(el).find(".size").text().trim();
-
-      if (market) {
-        markets.push({ market, direction, size });
-      }
+    // Browserless request
+    const response = await fetch(`https://chrome.browserless.io/content?token=${token}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url,
+        waitFor: "script#__NEXT_DATA__",
+      })
     });
 
-    await browser.close();
+    const html = await response.text();
+
+    // Extract the __NEXT_DATA__ JSON
+    const jsonMatch = html.match(
+      /<script id="__NEXT_DATA__" type="application\/json">(.*?)<\/script>/
+    );
+
+    if (!jsonMatch) {
+      return res.status(500).json({ error: "Unable to find trader data" });
+    }
+
+    const nextData = JSON.parse(jsonMatch[1]);
+
+    // Real data is in nextData.props.pageProps
+    const trader = nextData?.props?.pageProps;
+
+    if (!trader) {
+      return res.status(500).json({ error: "Trader data not found" });
+    }
 
     return res.status(200).json({
-      wallet,
-      name,
-      winRate,
-      pnl,
-      rank,
-      markets
+      name: trader?.creator?.name ?? null,
+      rank: trader?.creator?.rank ?? null,
+      pnl: trader?.creator?.overallPnl ?? null,
+      winRate: trader?.creator?.winRate ?? null,
+      positions: trader?.positions ?? [],
+      pnlHistory: trader?.pnlHistory ?? [],
+      categories: trader?.categories ?? [],
+      trades: trader?.trades ?? [],
+      raw: trader // full data if needed
     });
 
   } catch (err) {
-    console.error("Scraping error:", err);
     return res.status(500).json({
       error: "Scraping failed",
       details: err.message
     });
   }
 }
-
-// Test commit to refresh env vars
